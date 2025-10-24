@@ -1,0 +1,7 @@
+streamlit
+pdfplumber
+python-docx
+spacy>=3.7.0,<4.0.0
+
+# This line forces pip to install the spaCy model from its download URL
+https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.4/en_core_web_sm-3.7.4-py3-none-any.whl
