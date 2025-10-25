@@ -5,14 +5,15 @@ import io
 import spacy
 from spacy.matcher import Matcher
 from skills import SKILL_KEYWORDS
+from sentence_transformers import SentenceTransformer, util  # --- NEW ---
 
 # --- Page Setup ---
 st.set_page_config(
-    page_title="SkillSync MVP",
+    page_title="SkillSync",
     page_icon="🤖"
 )
 
-# --- Load NLP Model & Create Matcher ---
+# --- Load NLP Model (spaCy) & Create Matcher ---
 @st.cache_resource
 def load_nlp_resources():
     """Loads the spaCy model and builds the skill matcher."""
@@ -29,6 +30,17 @@ def load_nlp_resources():
 
 # Load the resources
 nlp, matcher = load_nlp_resources()
+
+# --- NEW: Load Semantic Model (SentenceTransformer) ---
+@st.cache_resource
+def load_semantic_model():
+    """Loads the SentenceTransformer model."""
+    # 'all-MiniLM-L6-v2' is a small, fast, and very good model.
+    model = SentenceTransformer('all-MiniLM-L6-v2')
+    return model
+
+# Load the semantic model
+semantic_model = load_semantic_model()
 
 
 # --- Helper Functions for Text Extraction ---
@@ -51,6 +63,7 @@ def extract_text_from_docx(file):
         text += para.text + "\n"
     return text
 
+# --- Skill Extraction Function (spaCy) ---
 def extract_skills(text, nlp, matcher):
     """Extract skills from text using the spaCy matcher."""
     doc = nlp(text)
@@ -63,9 +76,30 @@ def extract_skills(text, nlp, matcher):
         
     return found_skills
 
+# --- NEW: Semantic Score Function ---
+def get_semantic_score(text1, text2, model):
+    """Calculates semantic similarity score between two texts."""
+    try:
+        # 1. Encode the texts into vectors (embeddings)
+        embedding1 = model.encode(text1, convert_to_tensor=True)
+        embedding2 = model.encode(text2, convert_to_tensor=True)
+        
+        # 2. Calculate Cosine Similarity
+        # This gives a score between -1 and 1 (usually 0 to 1 for text)
+        cosine_score = util.cos_sim(embedding1, embedding2)
+        
+        # 3. Convert to a 0-100 percentage
+        score = (cosine_score.item() * 100)
+        # Ensure score is not negative (it shouldn't be, but as a safeguard)
+        return max(score, 0)
+    
+    except Exception as e:
+        st.error(f"Error in semantic calculation: {e}")
+        return 0.0
+
 # --- Main App Interface ---
 st.title("SkillSync - AI Resume Analyzer 🤖")
-st.write("Welcome! Upload a resume and paste a job description to see the magic.")
+st.write("Welcome! Let's find the *true* match between a resume and a job description.")
 
 # --- 1. File Uploader ---
 uploaded_resume = st.file_uploader(
@@ -96,32 +130,43 @@ if st.button("Analyze 🚀"):
         except Exception as e:
             st.error(f"Error processing file: {e}")
             st.stop()
-
-        # --- Step 2: Extract Skills ---
-        st.info("Analyzing text and extracting skills...")
         
+        # --- Run both analyses ---
+        st.info("Analyzing... This may take a moment.")
+
+        # --- Analysis 1: Keyword Matching (Our old logic) ---
         resume_skills = extract_skills(resume_text, nlp, matcher)
         jd_skills = extract_skills(jd_text, nlp, matcher)
-        
-        st.success("Analysis Complete!")
-
-        # --- FINAL UPDATED SECTION: Calculate Score & Display Report ---
-        
-        # 1. Calculate Matches
         matched_skills = resume_skills.intersection(jd_skills)
         missing_skills = jd_skills.difference(resume_skills)
         bonus_skills = resume_skills.difference(jd_skills)
         
-        # 2. Calculate Score
-        score = 0.0
-        if jd_skills: # Avoid division by zero
-            score = (len(matched_skills) / len(jd_skills)) * 100
+        keyword_score = 0.0
+        if jd_skills:
+            keyword_score = (len(matched_skills) / len(jd_skills)) * 100
         
-        # 3. Display the Report
+        # --- Analysis 2: Semantic Matching (Our new logic) ---
+        semantic_score = get_semantic_score(resume_text, jd_text, semantic_model)
+        
+        st.success("Analysis Complete!")
+
+        # --- Display Report ---
         st.markdown("---")
-        st.subheader(f"📈 Compatibility Score: {score:.2f}%")
         
-        # Use columns for a clean side-by-side layout
+        # --- NEW: Display Semantic Score ---
+        st.subheader(f"🧠 Semantic Match Score: {semantic_score:.2f}%")
+        st.progress(int(semantic_score))
+        st.write("This score measures the *contextual meaning* and relevance of the entire resume against the job description, powered by a Deep Learning model.")
+        
+        st.markdown("---")
+
+        # --- OLD: Display Keyword Score ---
+        st.subheader(f"🔑 Keyword Match Score: {keyword_score:.2f}%")
+        st.progress(int(keyword_score))
+        st.write("This score shows the percentage of *exact keywords* from the job description that were found in the resume.")
+        
+        
+        # Use columns for the keyword breakdown
         col1, col2 = st.columns(2)
         
         with col1:
@@ -129,20 +174,20 @@ if st.button("Analyze 🚀"):
             if matched_skills:
                 st.write(f"_{', '.join(matched_skills)}_")
             else:
-                st.info("No matching skills found.")
+                st.info("No matching keywords found.")
         
         with col2:
             st.subheader("❌ Missing Skills")
             if missing_skills:
                 st.write(f"_{', '.join(missing_skills)}_")
             else:
-                st.info("All required skills are present!")
+                st.info("All required keywords are present!")
         
         st.subheader("💡 Bonus Skills (in Resume)")
         if bonus_skills:
             st.write(f"_{', '.join(bonus_skills)}_")
         else:
-            st.info("No bonus skills (not required by JD) were found.")
+            st.info("No bonus keywords were found.")
 
         # Hide the raw text in expanders
         with st.expander("Show Raw Extracted Text"):
